@@ -4,18 +4,20 @@ import threading
 import time
 import uuid
 import datetime
+import sqlite3
 from collections import deque
 import asyncio
 from dotenv import load_dotenv
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from collections import defaultdict
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from kak import scan_and_report_file, scan_result
+from kak import scan_and_report_file, scan_result, get_hash
 
 load_dotenv()
 
 API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
-ADMIN_CHAT_ID = int(os.getenv('ADMIN_CHAT_ID'))
+ADMIN_CHAT_ID = '7235437192'
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
@@ -43,8 +45,8 @@ messages = {
         'start': "Здравствуйте! Этот телеграм-бот создан для анализа и проверки вредоносных и подозрительных файлов."
                  " Отправьте пожалуйста подозрительный файл в данный телеграм-бот для анализа и проверки.",
         'choose_language': "Пожалуйста, выберите язык:\nPlease choose your language:",
-        'file_received': "Ваш файл отправлен сотрудникам 'Кибербезопасности Центра' для анализа, "
-                         "спасибо за ваше внимание",
+        'file_received': "Ваш файл отправлен сотрудникам Центра Кибербезопасности  для анализа, "
+                         ",благодарим за ваше внимание",
         'unsupported_file': "Пожалуйста, отправьте только .apk, .exe, или .pdf файл"
     }
 }
@@ -63,6 +65,31 @@ def get_language_keyboard():
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.reply(messages['uz']['choose_language'], reply_markup=get_language_keyboard())
+    user_id = message.from_user.id
+    username = message.from_user.username or "No username"
+
+    # Send a message to the admin with user details
+    await bot.send_message(
+        ADMIN_CHAT_ID,
+        f"New user started the bot:\nUsername: @{username}\nUser ID: {user_id}"
+    )
+
+
+def get_main_menu():
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+    btn_help = KeyboardButton("📄 Yordam")
+    btn_send_file = KeyboardButton("📁 Fayl tekshirish")
+    btn_contact_support = KeyboardButton("📞 Ishonch raqami")
+    btn_change_language = KeyboardButton("🌐 Tilni almashtirish")  # New button for changing language
+    keyboard.add(btn_help, btn_send_file, btn_contact_support, btn_change_language)
+    return keyboard
+
+
+@dp.message_handler(lambda message: message.text == "🌐 Tilni almashtirish")
+async def change_language(message: types.Message):
+    user_id = message.from_user.id
+    lang = user_language.get(user_id, 'uz')  # Get the user's current language, default to 'uz'
+    await message.reply(messages[lang]['choose_language'], reply_markup=get_language_keyboard())
 
 
 @dp.callback_query_handler(lambda c: c.data.startswith('lang_'))
@@ -72,21 +99,77 @@ async def process_language_choice(callback_query: types.CallbackQuery):
     if choice == 'lang_ru':
         user_language[user_id] = 'ru'
         response_message = messages['ru']['start']
-    elif choice == 'lang_uz':
-        user_language[user_id] = 'uz'
-        response_message = messages['uz']['start']
     else:
         user_language[user_id] = 'uz'
         response_message = messages['uz']['start']
+
     await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(user_id, response_message)
+    await bot.send_message(user_id, response_message, reply_markup=get_main_menu())
 
 
-@dp.message_handler(content_types=['document'])
+@dp.message_handler(lambda message: message.text == "📄 Yordam")
+async def help_command(message: types.Message):
+    user_id = message.from_user.id
+    lang = user_language.get(user_id, 'uz')
+    help_text = messages[lang]['unsupported_file'] if lang == 'ru' else messages['uz']['unsupported_file']
+    await message.reply(help_text)
+
+
+@dp.message_handler(lambda message: message.text == "📁 Fayl tekshirish")
+async def send_file_command(message: types.Message):
+    user_id = message.from_user.id
+    lang = user_language.get(user_id, 'uz')
+    send_file_text = "Пожалуйста, отправьте файл для проверки." if lang == 'ru' else ("Iltimos, tekshirish uchun fayl "
+                                                                                      "yuboring.")
+    await message.reply(send_file_text)
+
+
+@dp.message_handler(lambda message: message.text == "📞 Ishonch raqami")
+async def contact_support_command(message: types.Message):
+    user_id = message.from_user.id
+    lang = user_language.get(user_id, 'uz')
+    support_text = "Свяжитесь с поддержкой по этому номеру: +998 00 000 00 00" if lang == 'ru' else ("Qo'llab"
+                                                                                                     "-quvvatlash "
+                                                                                                     "uchun bu "
+                                                                                                     "raqamga "
+                                                                                                     "murojaat "
+                                                                                                     "qiling: +998 00 "
+                                                                                                     "000 00 00")
+    await message.reply(support_text)
+
+
+@dp.message_handler(commands=['admin_send'])
+async def admin_send(message: types.Message):
+    if str(message.from_user.id) != ADMIN_CHAT_ID:
+        await message.reply("Sizda bu buyruqni bajarish uchun ruxsat yo'q.")
+        return
+    command_parts = message.get_args().split(' ', 1)
+
+    if len(command_parts) < 2:
+        await message.reply(
+            "Iltimos, user_id va xabarni kiriting. Misol: /admin_send user_id Sizning faylingizda virus aniqlandi.")
+        return
+
+    user_id = command_parts[0]
+    user_message = command_parts[1]
+
+    try:
+        user_id = int(user_id)
+        await bot.send_message(user_id, user_message)
+        await message.reply(f"Xabar {user_id} ga yuborildi.")
+    except Exception as e:
+        await message.reply(f"Xabar yuborishda xatolik: {e}")
+
+
+@dp.message_handler(content_types=types.ContentType.ANY)
 async def handle_document(message: types.Message):
     try:
         user_id = message.from_user.id
         lang = user_language.get(user_id, 'uz')
+        if not message.document:
+            await message.reply("Noto'g'ri fayl turi yuborildi. Iltimos, faqat hujjat yuboring.")
+            return
+
         current_time = time.time()
         async with processing_lock:
             last_sent_time = user_last_sent.get(user_id, 0)
@@ -94,10 +177,11 @@ async def handle_document(message: types.Message):
                 await message.reply("Iltimos, keyingi faylni 40 soniyadan keyin jo'nating")
                 return
             user_last_sent[user_id] = current_time
+
         document = message.document
         file_name = document.file_name
         username = message.from_user.username
-        if file_name.endswith(('.exe', '.apk', '.pdf')):
+        if file_name.endswith(('.exe', '.apk')):
             await message.reply(messages[lang]['file_received'])
             file_queue.append({
                 'document': document,
@@ -107,9 +191,10 @@ async def handle_document(message: types.Message):
                 'file_name': file_name
             })
             if not processing_lock.locked():
-                await asyncio.create_task(process_files())  ##########
+                await asyncio.create_task(process_files())
         else:
             await message.reply(messages[lang]['unsupported_file'])
+
     except Exception as e:
         await bot.send_message(ADMIN_CHAT_ID, f"Error occurred: {e}")
 
@@ -132,21 +217,43 @@ async def process_files():
             save_path = os.path.join(save_dir, random_filename)
             await bot.send_document(
                 ADMIN_CHAT_ID, document.file_id,
-                caption=f"Dastur nomi: {file_name}\nYuborgan shaxs:@{username}\nSaqlanadi:{random_filename}\n"
+                caption=f"Dastur nomi: {file_name}\nYuborgan shaxs: @{username}\nSaqlanadi: {random_filename}\n"
                         f"Chat ID: {user_id}\nTime: {datetime.datetime.now()}"
             )
             await bot.send_message(user_id, '⌛️')
             await bot.download_file(file_path, save_path)
-            scan_process = scan_and_report_file(save_path)
-            finish_result = scan_result(scan_process['scans'])
-            await bot.send_message(
-                chat_id,
-                f"Analiz natijalari {file_name}:\n{finish_result}"
-            )
+            file_hash = get_hash(save_path)
+            conn = sqlite3.connect('myallfiles.db')
+            cursor = conn.cursor()
+            cursor.execute('SELECT results FROM files WHERE hash_id = ?', (file_hash,))
+            row = cursor.fetchone()
+            if row:
+                results = row[0]
+                await bot.send_message(
+                    chat_id,
+                    f"Analiz natijalari {file_name} mavjud edi:\n{results}"
+                )
+            else:
+                try:
+                    scan_process = scan_and_report_file(file_hash=file_hash)
+                    finish_result = scan_result(scan_process['scans'])
+                    cursor.execute(
+                        'INSERT INTO files (hash_id, file_name, results, date_time, username) VALUES (?, ?, ?, ?, ?)',
+                        (file_hash, file_name, finish_result, datetime.datetime.now().isoformat(), username))
+                    conn.commit()
+
+                    await bot.send_message(
+                        chat_id,
+                        f"Analiz natijalari {file_name}:\n{finish_result}"
+                    )
+
+                except Exception as e:
+                    await bot.send_message(chat_id, "Fayl tekshirilyabdi, iltimos kuting...")
+                    await bot.send_message(ADMIN_CHAT_ID, f"Error occurred while processing {file_name}: {e}")
+            conn.close()
 
         except Exception as e:
             await bot.send_message(ADMIN_CHAT_ID, f"Error occurred while processing {file_name}: {e}")
-
         await asyncio.sleep(1)
 
 
