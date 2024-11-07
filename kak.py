@@ -1,6 +1,7 @@
 import requests
 import os
 from dotenv import load_dotenv
+import hashlib
 
 load_dotenv()
 API_KEY = os.getenv('VIRUSTOTAL_API_KEY')
@@ -8,17 +9,19 @@ VT_URL = 'https://www.virustotal.com/vtapi/v2/file/scan'
 REPORT_URL = 'https://www.virustotal.com/vtapi/v2/file/report'
 
 
-def scan_and_report_file(file_path):
-    with open(file_path, 'rb') as file:
-        files = {'file': (file_path, file)}
-        params = {'apikey': API_KEY}
-        response = requests.post(VT_URL, files=files, params=params)
-        scan_response = response.json()
-        resource = scan_response.get('resource')
-        params = {'apikey': API_KEY, 'resource': resource}
-        response = requests.get(REPORT_URL, params=params)
+def scan_and_report_file(file_hash=None):
+    if file_hash:
+        resource = file_hash
+    else:
+        raise ValueError("file_hash must be provided.")
+    params = {'apikey': API_KEY, 'resource': resource}
+    try:
+        response = requests.get(REPORT_URL, params=params, timeout=10)  # Set a timeout
         report_response = response.json()
         return report_response
+    except requests.exceptions.RequestException as e:
+        print(f"Error contacting VirusTotal: {e}")
+        raise
 
 
 def scan_result(scans):
@@ -41,4 +44,12 @@ def scan_result(scans):
     result_string = f"{detect_str}{clear_str}"
 
     return result_string
+
+
+def get_hash(file_path, hash_algorithm='sha256'):
+    hash_func = getattr(hashlib, hash_algorithm)()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_func.update(chunk)
+    return hash_func.hexdigest()
 
