@@ -197,13 +197,28 @@ async def handle_document(message: types.Message):
                 'user_id': message.from_user.id,
                 'file_name': file_name
             })
+            file_size = document.file_size
+            if file_size > 30 * 1024 * 1024:  # File size check (30 MB)
+                await bot.send_message(
+                    ADMIN_CHAT_ID,
+                    f"Fayl hajmi {file_name} juda katta (>{file_size / (1024 * 1024):.2f} MB), "
+                    "qo'lda tekshirish uchun yuklandi."
+                )
+                # Send the oversized file to the admin
+                await bot.send_document(
+                    ADMIN_CHAT_ID,
+                    document.file_id,
+                    caption=f"Oversized file: {file_name}\nUploaded by: @{username}\nSize: {file_size / (1024 * 1024):.2f} MB"
+                )
+                return
+
             if not processing_lock.locked():
                 await asyncio.create_task(process_files())
         else:
             await message.reply(messages[lang]['unsupported_file'])
 
     except Exception as e:
-        await bot.send_message(ADMIN_CHAT_ID, f"Error occurred: {e}")
+        await bot.send_message(ADMIN_CHAT_ID, f"Error occurred1: {e}")
 
 
 async def process_files():
@@ -214,7 +229,6 @@ async def process_files():
         username = file_info['username']
         user_id = file_info['user_id']
         file_name = document.file_name
-
         try:
             file_info = await bot.get_file(document.file_id)
             file_path = file_info.file_path
@@ -257,11 +271,12 @@ async def process_files():
                 except Exception as e:
                     await bot.send_message(chat_id, "Fayl bazada aniqlanmadi,tekshiruv vaqt olishi mumkin iltimos "
                                                     "kuting...")
-                    await bot.send_message(ADMIN_CHAT_ID, f"VirusTotal bazasida aniqlanmadi qo'lda tekshiring {file_name}: {e}")
+                    await bot.send_message(ADMIN_CHAT_ID, f"VirusTotal bazasida aniqlanmadi qo'lda"
+                                                          f" tekshiring {file_name}: {e}")
             conn.close()
 
         except Exception as e:
-            await bot.send_message(ADMIN_CHAT_ID, f"Qandaydir xatolik  {file_name}: {e}")
+            await bot.send_message(ADMIN_CHAT_ID, f"Qandaydir xatolik1  {file_name}: {e}")
         await asyncio.sleep(1)
 
 
